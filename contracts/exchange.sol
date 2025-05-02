@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 
 import './token.sol';
+import "@openzeppelin/contracts/access/Ownable.sol";
 //import "hardhat/console.sol";
 
 
@@ -75,7 +76,30 @@ contract TokenExchange is Ownable {
     //                    FUNCTIONS TO IMPLEMENT
     // ============================================================
     
-    /* ========================= Liquidity Provider Functions =========================  */ 
+    /* ========================= Liquidity Provider Functions =========================  */
+    // 1. Check if pool exists (token_reserves and eth_reserves are non-zero)
+    //    - If pool doesn't exist, revert with error message
+    // 2. Verify msg.value > 0 (ensure ETH is sent to add liquidity)
+    // 3. Calculate current exchange rate (token_reserves / eth_reserves)
+    //    - Exchange rate represents tokens per ETH
+    // 4. Check if current exchange rate is within max_exchange_rate and min_exchange_rate
+    //    - If not, revert with error message
+    // 5. Calculate required token amount based on msg.value and current exchange rate
+    //    - Use constant product formula (x * y = k) to maintain pool ratio
+    //    - Formula: tokens = (msg.value * token_reserves) / eth_reserves
+    // 6. Verify sender has enough tokens using token.balanceOf(msg.sender)
+    //    - Revert if insufficient token balance
+    // 7. Transfer tokens from sender to contract using token.transferFrom
+    //    - Ensure transfer succeeds
+    // 8. Update token_reserves and eth_reserves
+    //    - token_reserves += transferred tokens
+    //    - eth_reserves += msg.value
+    // 9. Update constant product (k = token_reserves * eth_reserves)
+    // 10. Add sender to lp_providers if not already present
+    //    - lp_providers: array tracking liquidity providers
+    // 11. Update lps mapping for sender
+    //    - lps: mapping of address to liquidity contribution
+    //    - Track proportional contribution (e.g., based on ETH or tokens added)
 
     // Function addLiquidity: Adds liquidity given a supply of ETH (sent to the contract as msg.value).
     // You can change the inputs, or the scope of your function, as needed.
@@ -84,7 +108,34 @@ contract TokenExchange is Ownable {
         payable
     {
         /******* TODO: Implement this function *******/
-       
+        require(token_reserves>0 && eth_reserves>0, "Pool is not exist");
+        require(msg.value>0, "ETH is not sent");
+        uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;//Calculating the current exchange rate (tokens for 1 ETH)
+        require(current_exchange_rate>=min_exchange_rate && current_exchange_rate<=max_exchange_rate,
+            "Exchange rate out of bounds");
+
+        uint requiredTokens = (msg.value*token_reserves)/eth_reserves;
+        require(requiredTokens > 0, "Invalid token amount");
+        require(token.balanceOf(msg.sender)>requiredTokens, "Sender has not enough tokens");
+
+        require(token.transferFrom(msg.sender,address(this),requiredTokens),"Token transfer failed");
+
+        token_reserves+=requiredTokens;
+        eth_reserves+=msg.value;
+
+        k=token_reserves*eth_reserves;
+
+        bool flag=false;
+        for(uint i=0; i<lp_providers.length; i++) {
+            if(lp_providers[i]==msg.sender) {
+                flag=true;
+                break;
+            }
+        }
+        if(!flag){
+            lp_providers.push(msg.sender);
+        }
+        lps[msg.sender] += msg.value;
     }
 
 
@@ -95,7 +146,38 @@ contract TokenExchange is Ownable {
         payable
     {
         /******* TODO: Implement this function *******/
+        require(token_reserves>0&& eth_reserves>0,"Pool does not exist");
+        require(amountETH > 0 && amountETH <= lps[msg.sender], "Invalid ETH amount");
 
+        uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;
+
+        require(
+            current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate,
+            "Exchange rate out of bounds"
+        );
+        uint tokensToReturn = (amountETH * token_reserves) / eth_reserves;
+
+        require(eth_reserves - amountETH >= 1, "ETH reserves too low");
+        require(token_reserves - tokensToReturn >= 1, "Token reserves too low");
+
+        (bool sent, ) = msg.sender.call{value: amountETH}("");
+        require(sent, "ETH transfer failed");
+
+        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
+        eth_reserves -= amountETH;
+        token_reserves -= tokensToReturn;
+
+        k = token_reserves * eth_reserves;
+        lps[msg.sender] -= amountETH;
+
+        if (lps[msg.sender] == 0) {
+            for (uint i = 0; i < lp_providers.length; i++) {
+                if (lp_providers[i] == msg.sender) {
+                    removeLP(i);
+                    break;
+                }
+            }
+        }
     }
 
     // Function removeAllLiquidity: Removes all liquidity that msg.sender is entitled to withdraw
@@ -105,7 +187,36 @@ contract TokenExchange is Ownable {
         payable
     {
         /******* TODO: Implement this function *******/
-    
+        require(token_reserves > 0 && eth_reserves > 0, "Pool does not exist");
+        require(lps[msg.sender] > 0, "No liquidity to remove");
+        uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;
+        require(
+            current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate,
+            "Exchange rate out of bounds"
+        );
+        uint amountETH = lps[msg.sender];
+        uint tokensToReturn = (amountETH * token_reserves) / eth_reserves;
+
+        require(eth_reserves - amountETH >= 1, "ETH reserves too low");
+        require(token_reserves - tokensToReturn >= 1, "Token reserves too low");
+
+        (bool sent, ) = msg.sender.call{value: amountETH}("");
+        require(sent, "ETH transfer failed");
+
+        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
+
+        eth_reserves -= amountETH;
+        token_reserves -= tokensToReturn;
+
+        k = token_reserves * eth_reserves;
+        lps[msg.sender] = 0;
+        for (uint i = 0; i < lp_providers.length; i++) {
+            if (lp_providers[i] == msg.sender) {
+                removeLP(i);
+                break;
+            }
+        }
+
     }
     /***  Define additional functions for liquidity fees here as needed ***/
 
@@ -119,7 +230,27 @@ contract TokenExchange is Ownable {
         payable
     {
         /******* TODO: Implement this function *******/
+        require(token_reserves > 0 && eth_reserves > 0, "Pool does not exist");
 
+        require(amountTokens > 0, "Invalid token amount");
+        require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient token balance");
+
+        uint ethOut = (amountTokens * eth_reserves) / (token_reserves + amountTokens);
+        // Application of commission (3%)
+        ethOut = ethOut * (swap_fee_denominator - swap_fee_numerator) / swap_fee_denominator;
+
+        require(eth_reserves - ethOut >= 1, "ETH reserves too low");
+
+        uint exchange_rate = ((amountTokens * 1e18) / ethOut);
+        require(exchange_rate <= max_exchange_rate, "Exchange rate too high");
+
+        require(token.transferFrom(msg.sender, address(this), amountTokens), "Token transfer failed");
+
+        (bool sent, ) = msg.sender.call{value: ethOut}("");
+        require(sent, "ETH transfer failed");
+
+        token_reserves += amountTokens;
+        eth_reserves -= ethOut;
     }
 
 
@@ -132,6 +263,21 @@ contract TokenExchange is Ownable {
         payable 
     {
         /******* TODO: Implement this function *******/
+        require(token_reserves > 0 && eth_reserves > 0, "Pool does not exist");
+        require(msg.value > 0, "No ETH sent");
+
+        uint tokensOut = (msg.value * token_reserves) / (eth_reserves + msg.value);
+        tokensOut = tokensOut * (swap_fee_denominator - swap_fee_numerator) / swap_fee_denominator;
+
+
+        require(token_reserves - tokensOut >= 1, "Token reserves too low");
+        uint exchange_rate = ((msg.value * 1e18) / tokensOut);
+        require(exchange_rate <= max_exchange_rate, "Exchange rate too high");
+
+        require(token.transfer(msg.sender, tokensOut), "Token transfer failed");
+
+        eth_reserves += msg.value;
+        token_reserves -= tokensOut;
 
     }
 }

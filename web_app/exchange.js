@@ -1,5 +1,5 @@
 // =================== FIIT DEX Project =================== // 
-//        @authors:           //
+//        @authors:           //Yulian Kisil && Sofiia Poklonova
 // ========================================================= //                  
 
 // TODO: Fill in the authors names.
@@ -370,11 +370,11 @@ const token_abi = [
     "stateMutability": "nonpayable",
     "type": "function"
   }
-];             
+];
 const token_contract = new ethers.Contract(token_address, token_abi, provider.getSigner());
 
 // TODO: Paste your exchange address here
-const exchange_abi = [
+const exchange_abi =  [
   {
     "inputs": [],
     "stateMutability": "nonpayable",
@@ -632,7 +632,45 @@ async function getPoolState() {
 /*** ADD LIQUIDITY ***/
 async function addLiquidity(amountEth, maxSlippagePct) {
     /** TODO: ADD YOUR CODE HERE **/
+  try {
+    const exchangeContract = new ethers.Contract(exchange_address, exchange_abi, signer);
+    const tokenContract = new ethers.Contract(token_address, token_abi, signer);
+
+    const ethAmount = ethers.utils.parseUnits(amountEth.toString(), "ether");
+
+    const currentRate = 1;
+    const maxRate = ethers.utils.parseUnits((currentRate * (1 + maxSlippagePct / 100)).toString(), 18);
+    const minRate = ethers.utils.parseUnits((currentRate * (1 - maxSlippagePct / 100)).toString(), 18);
+
+    const tokenAmount = ethAmount;
+
+    const approveTx = await tokenContract.approve(exchange_address, tokenAmount);
+    await approveTx.wait();
+    console.log("Tokens approved");
+
+    const tx = await exchangeContract.addLiquidity(maxRate, minRate, {
+      value: ethAmount,
+    });
+    await tx.wait();
+    console.log(`Added ${amountEth} ETH liquidity`);
+
+    await updateReserves();
+  } catch (error) {
+    console.error("Error adding liquidity:", error);
+  }
    
+}
+async function updateReserves() {
+  try {
+    const exchangeContract = new ethers.Contract(exchange_address, exchange_abi, provider);
+    const tokenReserves = await exchangeContract.token_reserves();
+    const ethReserves = await exchangeContract.eth_reserves();
+    document.getElementById("token-reserves").innerText = ethers.utils.formatUnits(tokenReserves, 18);
+    document.getElementById("eth-reserves").innerText = ethers.utils.formatEther(ethReserves);
+    console.log("Reserves updated");
+  } catch (error) {
+    console.error("Error updating reserves:", error);
+  }
 }
 
 /*** REMOVE LIQUIDITY ***/
