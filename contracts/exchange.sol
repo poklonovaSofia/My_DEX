@@ -92,7 +92,6 @@ contract TokenExchange is Ownable {
 
     /* ========================= Liquidity Provider Functions =========================  */
 
-
     // Function addLiquidity: Adds liquidity given a supply of ETH (sent to the contract as msg.value).
     // You can change the inputs, or the scope of your function, as needed.
     function addLiquidity(uint max_exchange_rate, uint min_exchange_rate)
@@ -103,13 +102,13 @@ contract TokenExchange is Ownable {
         require(token_reserves>0 && eth_reserves>0, "Pool is not exist");
         require(msg.value>0, "ETH is not sent");
         uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;//Calculating the current exchange rate (tokens for 1 ETH)
-        require(current_exchange_rate>=min_exchange_rate && current_exchange_rate<=max_exchange_rate,
+        require(current_exchange_rate>=min_exchange_rate
+            && current_exchange_rate<=max_exchange_rate,
             "Exchange rate out of bounds");
 
         uint requiredTokens = (msg.value*token_reserves)/eth_reserves;
         require(requiredTokens > 0, "Invalid token amount");
         require(token.balanceOf(msg.sender)>requiredTokens, "Sender has not enough tokens");
-
         require(token.transferFrom(msg.sender,address(this),requiredTokens),"Token transfer failed");
         uint shares;
         if (totalShares == 0) {
@@ -123,7 +122,7 @@ contract TokenExchange is Ownable {
         token_reserves+=requiredTokens;
         eth_reserves+=msg.value;
 
-        k=token_reserves*eth_reserves;
+        k=token_reserves * eth_reserves;
 
         bool flag=false;
         for(uint i=0; i<lp_providers.length; i++) {
