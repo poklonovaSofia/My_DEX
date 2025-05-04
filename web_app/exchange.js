@@ -673,18 +673,6 @@ async function getPoolState() {
 
 // Note: maxSlippagePct will be passed in as an int out of 100. 
 // Be sure to divide by 100 for your calculations.
-async function updateReserves() {
-  try {
-    const exchangeContract = new ethers.Contract(exchange_address, exchange_abi, provider);
-    const tokenReserves = await exchangeContract.token_reserves();
-    const ethReserves = await exchangeContract.eth_reserves();
-    document.getElementById("token-reserves").innerText = ethers.utils.formatUnits(tokenReserves, 18);
-    document.getElementById("eth-reserves").innerText = ethers.utils.formatEther(ethReserves);
-    console.log("Reserves updated");
-  } catch (error) {
-    console.error("Error updating reserves:", error);
-  }
-}
 /*** ADD LIQUIDITY ***/
 async function addLiquidity(amountEth, maxSlippagePct) {
   try {
