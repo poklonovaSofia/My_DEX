@@ -13,6 +13,13 @@ contract TokenExchange is Ownable {
     address tokenAddr= 0x5FbDB2315678afecb367f032d93F642f64180aa3;                                  // TODO: paste token contract address here
     Token public token = Token(tokenAddr);
 
+//constructor for testing file
+//    constructor(address _tokenAddr) {
+//        tokenAddr = _tokenAddr;
+//        token = Token(_tokenAddr);
+//    }
+    //basic constructor
+    constructor() {}
     // Liquidity pool for the exchange
     uint private token_reserves = 0;
     uint private eth_reserves = 0;
@@ -36,7 +43,6 @@ contract TokenExchange is Ownable {
     function getEthReserves() external view returns (uint) {
         return eth_reserves;
     }
-    constructor() {}
     function getCurrentRate()
         external
         view
