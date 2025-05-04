@@ -11,17 +11,16 @@ contract TokenExchange is Ownable {
     string public exchange_name = '';
 
     address tokenAddr= 0x5FbDB2315678afecb367f032d93F642f64180aa3;                                  // TODO: paste token contract address here
-    Token public token = Token(tokenAddr);
+    Token public token = Token(tokenAddr);                                
 
     // Liquidity pool for the exchange
     uint private token_reserves = 0;
     uint private eth_reserves = 0;
 
-    mapping(address => uint) private lps;
-    uint private totalShares = 0;
-    mapping(address => uint) private lpShares;
+    mapping(address => uint) private lps; 
+     
     // Needed for looping through the keys of the lps mapping
-    address[] private lp_providers;
+    address[] private lp_providers;                     
 
     // liquidity rewards
     uint private swap_fee_numerator = 3;
@@ -89,7 +88,7 @@ contract TokenExchange is Ownable {
     // ============================================================
     //                    FUNCTIONS TO IMPLEMENT
     // ============================================================
-
+    
     /* ========================= Liquidity Provider Functions =========================  */
 
 
@@ -111,15 +110,7 @@ contract TokenExchange is Ownable {
         require(token.balanceOf(msg.sender)>requiredTokens, "Sender has not enough tokens");
 
         require(token.transferFrom(msg.sender,address(this),requiredTokens),"Token transfer failed");
-        uint shares;
-        if (totalShares == 0) {
-            shares = msg.value; // initial LP
-        } else {
-            shares = (msg.value * totalShares) / eth_reserves;
-        }
-        require(shares > 0, "Zero shares");
-        lpShares[msg.sender] += shares;
-        totalShares += shares;
+
         token_reserves+=requiredTokens;
         eth_reserves+=msg.value;
 
@@ -141,34 +132,34 @@ contract TokenExchange is Ownable {
 
     // Function removeLiquidity: Removes liquidity given the desired amount of ETH to remove.
     // You can change the inputs, or the scope of your function, as needed.
-    function removeLiquidity(uint amountETH, uint max_exchange_rate, uint min_exchange_rate) public payable {
-        require(token_reserves > 0 && eth_reserves > 0, "Pool does not exist");
+    function removeLiquidity(uint amountETH, uint max_exchange_rate, uint min_exchange_rate)
+        public
+        payable
+    {
+        /******* TODO: Implement this function *******/
+        require(token_reserves>0&& eth_reserves>0,"Pool does not exist");
         require(amountETH > 0 && amountETH <= lps[msg.sender], "Invalid ETH amount");
 
         uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;
-        require(current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate, "Exchange rate out of bounds");
 
+        require(
+            current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate,
+            "Exchange rate out of bounds"
+        );
         uint tokensToReturn = (amountETH * token_reserves) / eth_reserves;
-        uint sharesToRemove = (amountETH * totalShares) / eth_reserves;
 
-        require(eth_reserves >= amountETH, "ETH reserves too low");
-        require(token_reserves >= tokensToReturn, "Token reserves too low");
-        require(sharesToRemove <= lpShares[msg.sender], "Insufficient shares");
+        require(eth_reserves - amountETH >= 1, "ETH reserves too low");
+        require(token_reserves - tokensToReturn >= 1, "Token reserves too low");
 
-        // Оновлення стану перед відправкою
-        lpShares[msg.sender] -= sharesToRemove;
-        totalShares -= sharesToRemove;
-        lps[msg.sender] -= amountETH;
-        eth_reserves -= amountETH;
-        token_reserves -= tokensToReturn;
-        k = token_reserves * eth_reserves;
-
-        // Переказ токенів
-        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
-
-        // Переказ ETH
         (bool sent, ) = msg.sender.call{value: amountETH}("");
         require(sent, "ETH transfer failed");
+
+        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
+        eth_reserves -= amountETH;
+        token_reserves -= tokensToReturn;
+
+        k = token_reserves * eth_reserves;
+        lps[msg.sender] -= amountETH;
 
         if (lps[msg.sender] == 0) {
             for (uint i = 0; i < lp_providers.length; i++) {
@@ -179,43 +170,44 @@ contract TokenExchange is Ownable {
             }
         }
     }
+
     // Function removeAllLiquidity: Removes all liquidity that msg.sender is entitled to withdraw
     // You can change the inputs, or the scope of your function, as needed.
-    function removeAllLiquidity(uint max_exchange_rate, uint min_exchange_rate) external payable {
+    function removeAllLiquidity(uint max_exchange_rate, uint min_exchange_rate)
+        external
+        payable
+    {
+        /******* TODO: Implement this function *******/
         require(token_reserves > 0 && eth_reserves > 0, "Pool does not exist");
         require(lps[msg.sender] > 0, "No liquidity to remove");
-
         uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;
-        require(current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate, "Exchange rate out of bounds");
-
+        require(
+            current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate,
+            "Exchange rate out of bounds"
+        );
         uint amountETH = lps[msg.sender];
         uint tokensToReturn = (amountETH * token_reserves) / eth_reserves;
-        uint sharesToRemove = lpShares[msg.sender];
 
-        require(eth_reserves >= amountETH, "ETH reserves too low");
-        require(token_reserves >= tokensToReturn, "Token reserves too low");
+        require(eth_reserves - amountETH >= 1, "ETH reserves too low");
+        require(token_reserves - tokensToReturn >= 1, "Token reserves too low");
 
-        // Оновлення стану перед відправкою
-        lpShares[msg.sender] = 0;
-        totalShares -= sharesToRemove;
-        lps[msg.sender] = 0;
-        eth_reserves -= amountETH;
-        token_reserves -= tokensToReturn;
-        k = token_reserves * eth_reserves;
-
-        // Переказ токенів
-        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
-
-        // Переказ ETH
         (bool sent, ) = msg.sender.call{value: amountETH}("");
         require(sent, "ETH transfer failed");
 
+        require(token.transfer(msg.sender, tokensToReturn), "Token transfer failed");
+
+        eth_reserves -= amountETH;
+        token_reserves -= tokensToReturn;
+
+        k = token_reserves * eth_reserves;
+        lps[msg.sender] = 0;
         for (uint i = 0; i < lp_providers.length; i++) {
             if (lp_providers[i] == msg.sender) {
                 removeLP(i);
                 break;
             }
         }
+
     }
     /***  Define additional functions for liquidity fees here as needed ***/
 

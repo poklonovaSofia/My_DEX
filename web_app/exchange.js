@@ -5,7 +5,7 @@
 // TODO: Fill in the authors names.
 
 // Set up Ethers.js
-const provider = new ethers.providers.JsonRpcProvider("http://127.0.0.1:8545");
+const provider = new ethers.providers.JsonRpcProvider("http://localhost:8545");
 var defaultAccount;
 
 const exchange_name = 'Sofilian';             // TODO: fill in the name of your exchange
@@ -445,6 +445,32 @@ const exchange_abi =  [
   },
   {
     "inputs": [],
+    "name": "getCurrentRate",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getEthReserves",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "getSwapFee",
     "outputs": [
       {
@@ -452,6 +478,19 @@ const exchange_abi =  [
         "name": "",
         "type": "uint256"
       },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getTokenReserves",
+    "outputs": [
       {
         "internalType": "uint256",
         "name": "",
@@ -604,6 +643,12 @@ async function init() {
       await token_contract.connect(provider.getSigner(defaultAccount)).approve(exchange_address, total_supply);
       // initialize pool with equal amounts of ETH and tokens, so exchange rate begins as 1:1
       await exchange_contract.connect(provider.getSigner(defaultAccount)).createPool(5000, { value: ethers.utils.parseUnits("5000", "wei")});
+
+      const tokenBalance = await token_contract.balanceOf(defaultAccount);
+      console.log(`Token Balance after init: ${tokenBalance.toString()}`);
+
+      const ethBalanceAfter = await provider.getBalance(defaultAccount);
+      console.log(`ETH Balance after init: ${ethers.utils.formatEther(ethBalanceAfter)} ETH`);
       console.log("init finished");
 
        // All accounts start with 0 of your tokens. Thus, be sure to swap before adding liquidity.
@@ -628,38 +673,6 @@ async function getPoolState() {
 
 // Note: maxSlippagePct will be passed in as an int out of 100. 
 // Be sure to divide by 100 for your calculations.
-
-/*** ADD LIQUIDITY ***/
-async function addLiquidity(amountEth, maxSlippagePct) {
-    /** TODO: ADD YOUR CODE HERE **/
-  try {
-    const exchangeContract = new ethers.Contract(exchange_address, exchange_abi, signer);
-    const tokenContract = new ethers.Contract(token_address, token_abi, signer);
-
-    const ethAmount = ethers.utils.parseUnits(amountEth.toString(), "ether");
-
-    const currentRate = 1;
-    const maxRate = ethers.utils.parseUnits((currentRate * (1 + maxSlippagePct / 100)).toString(), 18);
-    const minRate = ethers.utils.parseUnits((currentRate * (1 - maxSlippagePct / 100)).toString(), 18);
-
-    const tokenAmount = ethAmount;
-
-    const approveTx = await tokenContract.approve(exchange_address, tokenAmount);
-    await approveTx.wait();
-    console.log("Tokens approved");
-
-    const tx = await exchangeContract.addLiquidity(maxRate, minRate, {
-      value: ethAmount,
-    });
-    await tx.wait();
-    console.log(`Added ${amountEth} ETH liquidity`);
-
-    await updateReserves();
-  } catch (error) {
-    console.error("Error adding liquidity:", error);
-  }
-   
-}
 async function updateReserves() {
   try {
     const exchangeContract = new ethers.Contract(exchange_address, exchange_abi, provider);
@@ -672,27 +685,119 @@ async function updateReserves() {
     console.error("Error updating reserves:", error);
   }
 }
+/*** ADD LIQUIDITY ***/
+async function addLiquidity(amountEth, maxSlippagePct) {
+  try {
+    if (amountEth <= 0) {
+      throw new Error("Amount of ETH must be greater than 0");
+    }
+
+    // Отримання поточного курсу
+    let currentRate = await exchange_contract.getCurrentRate();
+    currentRate = currentRate / 1e18;
+    console.log("Current rate:", currentRate);
+
+    // Обчислення max і min курсів (використовуємо maxSlippagePct = 10% за замовчуванням)
+    let max_exchange_rate = (currentRate * (100 + maxSlippagePct)) / 100 * 1e18;
+    let min_exchange_rate = (currentRate * (100 - maxSlippagePct)) / 100 * 1e18;
+
+    // Обчислення необхідних токенів
+    let tokenReserves = await exchange_contract.getTokenReserves();
+    let ethReserves = await exchange_contract.getEthReserves();
+    let msgValue = ethers.BigNumber.from(amountEth.toString()); // amountEth у wei
+    let requiredTokens = msgValue.mul(tokenReserves).div(ethReserves);
+
+    // Перевірка балансу токенів
+    let balance = await token_contract.balanceOf(defaultAccount);
+    console.log("Required tokens (raw):", requiredTokens.toString());
+    console.log("Token balance (raw):", balance.toString());
+    console.log("Required tokens (scaled):", ethers.utils.formatUnits(requiredTokens, 18));
+    console.log("Token balance (scaled):", ethers.utils.formatUnits(balance, 18));
+    if (balance.lt(requiredTokens)) {
+      throw new Error(`Not enough tokens: need ${ethers.utils.formatUnits(requiredTokens, 18)}, have ${ethers.utils.formatUnits(balance, 18)}`);
+    }
+
+    // Схвалення токенів
+    await token_contract.connect(provider.getSigner(defaultAccount)).approve(
+        exchange_address,
+        requiredTokens
+    );
+
+    // Виклик addLiquidity
+    await exchange_contract.connect(provider.getSigner(defaultAccount)).addLiquidity(
+        ethers.BigNumber.from(Math.floor(max_exchange_rate).toString()),
+        ethers.BigNumber.from(Math.floor(min_exchange_rate).toString()),
+        { value: msgValue }
+    );
+  } catch (error) {
+    console.error("Error in addLiquidity:", error.message);
+    throw error;
+  }
+}
 
 /*** REMOVE LIQUIDITY ***/
 async function removeLiquidity(amountEth, maxSlippagePct) {
     /** TODO: ADD YOUR CODE HERE **/
-    
+
+      let currentRate = await exchange_contract.getCurrentRate();
+      currentRate = currentRate / 1e18;
+
+
+      let max_exchange_rate = (currentRate * (100 + maxSlippagePct)) / 100 * 1e18;
+      let min_exchange_rate = (currentRate * (100 - maxSlippagePct)) / 100 * 1e18;
+      await exchange_contract.connect(provider.getSigner(defaultAccount)).removeLiquidity(
+          ethers.BigNumber.from(amountEth.toString()),
+          ethers.BigNumber.from(Math.floor(max_exchange_rate).toString()),
+          ethers.BigNumber.from(Math.floor(min_exchange_rate).toString())
+      );
+
 }
 
 async function removeAllLiquidity(maxSlippagePct) {
     /** TODO: ADD YOUR CODE HERE **/
-   
+  try{
+    let currentRate = await exchange_contract.getCurrentRate();
+    currentRate = currentRate / 1e18;
+
+    let max_exchange_rate = (currentRate * (100 + maxSlippagePct)) / 100 * 1e18;
+    let min_exchange_rate = (currentRate * (100 - maxSlippagePct)) / 100 * 1e18;
+    await exchange_contract.connect(provider.getSigner(defaultAccount)).removeAllLiquidity(
+        ethers.BigNumber.from(Math.floor(max_exchange_rate).toString()),
+        ethers.BigNumber.from(Math.floor(min_exchange_rate).toString())
+    );
+  } catch (error) {
+    console.error("Error in removeAllLiquidity:", error.message);
+    throw error;
+  }
 }
 
 /*** SWAP ***/
+
 async function swapTokensForETH(amountToken, maxSlippagePct) {
-    /** TODO: ADD YOUR CODE HERE **/
-   
+  const poolState = await getPoolState();
+
+  const expectedRate = poolState.eth_token_rate; // ETH за 1 токен
+  const maxRate = expectedRate * (1 - maxSlippagePct / 100); // мінімально прийнятний курс
+  const approveTx = await token_contract.connect(provider.getSigner(defaultAccount)).approve(exchange_address, amountToken);
+  await approveTx.wait();
+  const amountTokenBN = ethers.BigNumber.from(amountToken.toString());
+  const maxRateBN = ethers.utils.parseUnits(maxRate.toString(), 18); // переведено у wei
+
+  await exchange_contract.connect(provider.getSigner(defaultAccount))
+      .swapTokensForETH(amountTokenBN, maxRateBN);
 }
 
 async function swapETHForTokens(amountEth, maxSlippagePct) {
-    /** TODO: ADD YOUR CODE HERE **/
-   
+  const poolState = await getPoolState();
+
+  const expectedRate = poolState.token_eth_rate; // токени за 1 ETH
+  const minRate = expectedRate * (1 - maxSlippagePct / 100); // мінімально прийнятна кількість токенів за 1 ETH
+
+  const amountEthBN = ethers.utils.parseUnits(amountEth.toString(), "wei");
+  const minRateBN = ethers.utils.parseUnits(minRate.toString(), 18); // токени в wei
+
+  await exchange_contract.connect(provider.getSigner(defaultAccount))
+      .swapETHForTokens(minRateBN, { value: amountEthBN });
 }
 
 // =============================================================================
@@ -884,12 +989,14 @@ const sanityCheck = async function() {
           Math.abs(state3.token_liquidity - (state2.token_liquidity + expected_tokens_added)) < 5 &&
           Math.abs(Number(user_tokens3) - (Number(user_tokens2) - expected_tokens_added)) < 5);
         
-
+        console.log("hi")
         // accumulate some lp rewards
         for (var i = 0; i < 20; i++) {
           await swapETHForTokens(100, 1);
+          console.log("hi" + i);
           await swapTokensForETH(100, 1);
         }
+      console.log("hi2")
 
         var state4 = await getPoolState();
         var user_tokens4 = await token_contract.connect(provider.getSigner(defaultAccount)).balanceOf(defaultAccount);
@@ -898,6 +1005,7 @@ const sanityCheck = async function() {
         var expected_tokens_removed = (10 + 22 * 100 * swap_fee) * state3.token_eth_rate;
         var state5 = await getPoolState();
         var user_tokens5 = await token_contract.connect(provider.getSigner(defaultAccount)).balanceOf(defaultAccount);
+      console.log("hi3")
         score += check("Test removing liquidity", swap_fee[0], 
           state5.eth_liquidity === (state4.eth_liquidity - 10) &&
           Math.abs(state5.token_liquidity - (state4.token_liquidity - expected_tokens_removed)) < expected_tokens_removed * 1.2 &&
@@ -919,6 +1027,6 @@ const sanityCheck = async function() {
 // Sleep 3s to ensure init() finishes before sanityCheck() runs on first load.
 // If you run into sanityCheck() errors due to init() not finishing, please extend the sleep time.
 
-// setTimeout(function () {
-//   sanityCheck();
-// }, 3000);
+setTimeout(function () {
+  sanityCheck();
+}, 3000);
