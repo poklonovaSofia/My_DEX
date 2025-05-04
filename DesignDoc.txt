@@ -6,35 +6,82 @@
 
 1. Vysvetlite, prečo pridávanie a odoberanie likvidity na vašej burze nezmení výmenný kurz.
 
-
 # TODO: napíšte odpoveď na otázku 1
+
+    Pridávanie a uberanie likvidity na našej DEX nemení výmenný kurz, pretože tieto operácie sa
+vykonávajú úmerne aktuálnemu pomeru rezerv tokenov (MIR) a ETH v poole. Zmluva TokenExchange
+používa model tvorcu trhu s konštantným produktom (x - y = k), kde x predstavuje rezervy
+tokenov a y predstavuje rezervy ETH.
+Pri pridávaní likvidity addLiquidity používateľ pošle množstvo ETH msg.value a zodpovedajúce
+množstvo tokenov, ktoré sa vypočíta ako: requiredTokens = msg.value - token_reserves/eth_reserves
+    Tým sa zabezpečí, že pomer token_reserves eth_reserves (výmenný kurz) zostane nezmenený. Napríklad,
+ak má pool 5000 MIR a 5000 ETH (kurz 1:1), pridanie 100 ETH si vyžaduje 100 MIR, výsledkom
+čoho je 5100 MIR a 5100 ETH, pričom sa zachová kurz 1:1.
+    Podobne je to aj pri odstraňovaní likvidity (removeLiquidity, removeAllLiquidity),
+používateľ dostane ETH a tokeny úmerné jeho príspevku:
+TokensToReturn = sumaETH - token_reserves/eth_reserves
+    Tým sa zachová aj pomer rezerv. Konštanta k sa aktualizuje po každej operácii
+(k = token_reserves - eth_reserves), čím sa zabezpečí stabilita pomeru
+
 
 
 2. K bonusu - Vysvetlite svoju schému odmeňovania poskytovateľov likvidity a zdôvodnite rozhodnutia o dizajne, ktoré ste urobili. Ako spĺňa požiadavky na odmeny za likviditu uvedené v sekcii 7?
-
-
 # TODO: napíšte odpoveď na otázku 2
+Náš DEX implementuje systém odmeňovania prostredníctvom 3 % swapového poplatku (swap_fee_numerator = 3, swap_fee_denominator = 100). Poplatok sa počas swapov (swapTokensForETH, swapETHForTokens)
+odpočítava z výstupnej sumy a zostáva v poole, čím sa zvyšujú rezervy.
+Rozhodnutia o návrhu:
+Poplatok sa aplikuje na výstupné aktívum (ETH alebo tokeny) po výpočte výstupnej sumy pomocou vzorca poolu. Napríklad v prípade swapTokensForETH:
+    ethOut = (amountTokens - eth_reserves)/(token_reserves + amountTokens)
+    fee = (ethOut - swap_fee_numerator)/swap_fee_denominator
+    ethOut = ethOut - poplatok
+- Poplatok zvyšuje eth_reserves alebo token_reserves, čo je proporcionálne rozdelí poskytovateľom likvidity pri výbere.
+- Poskytovatelia dostanú odmenu úmernú ich príspevku (lps[msg.sender]), keďže väčšie rezervy znamenajú viac aktív pri výbere.
+
+Súlad s požiadavkami oddielu 7:
+- Sekcia 7 vyžaduje spravodlivé rozdelenie odmien. Naša schéma zabezpečuje, že poplatky sa automaticky pripočítavajú k fondu a poskytovatelia dostávajú proporcionálnu
+podiel pri výbere.
+- Poplatok vo výške 3 % je štandardom pre DEXy (napr. Uniswap), ktorý vyvažuje atraktívnosť pre obchodníkov a odmeny pre poskytovateľov.
+
+Odôvodnenie:
+- Jednoduchosť: Poplatky sú bezproblémovo integrované do poolu bez toho, aby sa vyžadovali ďalšie žetóny odmien.
+- Spravodlivosť: Odmeny sú úmerné príspevkom.
+- Odolnosť voči útokom: Kontroly sklzu (min_exchange_rate, max_exchange_rate) zmierňujú sendvičové útoky a chránia rezervy.
+
 
 
 3. Popíšte aspoň jednu metódu, ktorú ste použili na minimalizáciu spotreby gas pri kontrakte burzy. Prečo bola táto metóda efektívna?
-
-
 # TODO: napísať odpoveď na otázku 3
+Jednou z metód na minimalizáciu spotreby plynu bolo vykonávanie kontrol sklzu current_exchange_rate pred vykonaním nákladných operácií, ako je transferFrom alebo transfer, vo funkciách ako addLiquidity a swapTokensForETH. Napríklad v addLiquidity:
+
+uint current_exchange_rate = (token_reserves * 1e18) / eth_reserves;
+ require( current_exchange_rate >= min_exchange_rate && current_exchange_rate <= max_exchange_rate,
+„Exchange rate out of bounds“ );
+
+Kontrola sa vykonáva včas, čo umožňuje transakciu vrátiť pred nákladnými operáciami (napr. prevodmi tokenov).
+Účinnosť:
+- Prevody tokenov (transferFrom) stoja podstatne viac plynu  50 000) ako kurz
+výpočty ( 1 000 - 2 000).
+- Včasné kontroly šetria plyn, ak je sadzba mimo hraníc, čím sa znižujú náklady používateľov
 
 
 4. Voliteľná spätná väzba:
 4a. Koľko času ste strávili na zadaní?
-
 # TODO: odpovedať na otázku 4(a)
+  Na projekte sa strávilo približne 20 hodín vrátane kódovania, testovania, ladenia a dokumentácie,
+  vrátane toho, že sme to urobili v dvoch( Sofiia && Yulian)
 
 4b. Aká je jedna vec, ktorá by bola užitočná, keby ste ju vedeli predtým ako ste začali pracovať na zadaní 2?
 
 # TODO: odpovdať na otázku 4(b)
+{Užitočné predchádzajúce znalosti: Pochopenie spracovania chýb v Solidity (napr. require vs evert)
+a interakcií s Ethers.js by urýchlilo ladenie problémov, ako sú nefunkčné tlačidlá.
 
 4c. Keby ste mohli zmeniť jednu vec v tomto zadaní, čo by to bolo?
 
 # TODO: odpovedať na otázku 4(c)
+Jasnejší popis maxSlippagePct a min_exchange_rate v priradení by sa predišlo nedorozumeniam
 
 4d. Prosím pridajte nám akýkoľvek feedback alebo spätnú väzbu, ktorý máte na mysli alebo na srdci 😊.
 
 # TODO: odpovedať na otázku 4(d)
+Úloha bola náročná, ale veľmi poučná pre pochopenie DEXov a inteligentných kontraktov. Viac príkladov kódu v pokynoch by zjednodušilo začiatok
